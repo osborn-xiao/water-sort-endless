@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>倒水挑战 · 无尽模式</title>
+<style>
+  :root{
+    --ink:#3c4757; --dim:#8b98a8;
+    --ice0:#eef7f9; --ice1:#dceef2;
+    --accent:#3f8fd4; --gold:#e8a93c; --danger:#e8453c;
+    --bw:32px;   /* 瓶宽（舞台基准尺寸，整体由 JS 缩放适配屏幕） */
+    --bh:98px;   /* 瓶高 */
+    --gapx:24px; --gapy:18px;
+    --ease-out-quart:cubic-bezier(.25,1,.5,1);
+    --ease-in-out:cubic-bezier(.65,0,.35,1);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei","Hiragino Sans GB",system-ui,sans-serif;
+    background:
+      radial-gradient(700px 300px at 20% -5%, rgba(255,255,255,.9), rgba(255,255,255,0) 60%),
+      radial-gradient(600px 320px at 85% 105%, rgba(190,225,238,.55), rgba(190,225,238,0) 60%),
+      linear-gradient(180deg, var(--ice0) 0%, var(--ice1) 100%);
+    color:var(--ink); min-height:100vh;
+    overscroll-behavior:none; touch-action:manipulation;
+    -webkit-tap-highlight-color:transparent; user-select:none; overflow:hidden;
+  }
+  /* 固定尺寸舞台：JS 计算缩放，竖屏时整体旋转 90° 强制横屏显示 */
+  #stage{
+    position:fixed; left:50%; top:50%; transform-origin:center center; z-index:1;
+    width:780px; padding:8px 12px 14px;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  /* 浅色菱形底纹 */
+  .pattern{position:fixed; inset:0; pointer-events:none; z-index:0; opacity:.5;
+    background-image:
+      repeating-linear-gradient(45deg, rgba(255,255,255,.35) 0 2px, transparent 2px 46px),
+      repeating-linear-gradient(-45deg, rgba(255,255,255,.35) 0 2px, transparent 2px 46px);
+  }
+
+  /* ===== 顶部 HUD ===== */
+  .hud-top{width:100%; display:grid; grid-template-columns:1fr auto 1fr; align-items:start; gap:6px}
+  .hud-left{display:flex; align-items:center; gap:8px}
+  .icon-btn{
+    width:30px; height:30px; border-radius:50%; border:1.5px solid rgba(60,71,87,.35);
+    background:rgba(255,255,255,.55); color:var(--ink); display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:14px; backdrop-filter:blur(2px);
+  }
+  .icon-btn:hover{background:rgba(255,255,255,.85)}
+  .combo-pill{
+    margin-left:6px; min-width:96px; padding:4px 10px 6px; border-radius:999px;
+    background:linear-gradient(180deg,#4a5a6d,#33404f); color:#fff;
+    box-shadow:0 2px 8px rgba(51,64,79,.3);
+    opacity:0; transform:translateY(-4px); transition:opacity .2s, transform .2s;
+  }
+  .combo-pill.on{opacity:1; transform:none}
+  .combo-pill .ct{font-size:12px; letter-spacing:.08em; display:flex; align-items:center; gap:4px}
+  .combo-pill .ct b{font-size:15px; color:#ffd76e; font-variant-numeric:tabular-nums}
+  .combo-bar{margin-top:3px; height:4px; border-radius:999px; background:rgba(255,255,255,.18); overflow:hidden}
+  .combo-bar i{display:block; height:100%; width:0%; background:linear-gradient(90deg,#7fe36e,#ffd76e,#f08a2d); border-radius:999px}
+  .score-wrap{text-align:center}
+  .score-line{display:flex; align-items:baseline; justify-content:center; gap:8px}
+  .score-k{font-size:13px; color:var(--dim); letter-spacing:.3em}
+  #score{
+    font-family:"Noto Serif SC","Songti SC","STSong",serif; font-size:clamp(28px,5vw,38px); font-weight:700;
+    color:#33404f; font-variant-numeric:tabular-nums; letter-spacing:.04em; line-height:1;
+  }
+  #score.pop{animation:pop .3s var(--ease-out-quart)}
+  @keyframes pop{40%{transform:scale(1.12)}}
+  .gain{ /* 得分旁的绿色 +N */
+    font-size:16px; font-weight:700; color:#39b54a; opacity:0; font-variant-numeric:tabular-nums;
+  }
+  .gain.show{animation:gainUp .8s var(--ease-out-quart)}
+  @keyframes gainUp{0%{opacity:0; transform:translateY(6px)} 20%{opacity:1} 100%{opacity:0; transform:translateY(-16px)}}
+  .timer-pill{
+    margin:8px auto 0; display:inline-flex; align-items:center; gap:6px;
+    padding:4px 16px; border-radius:999px; background:rgba(255,255,255,.6);
+    border:1.5px solid rgba(60,71,87,.18); box-shadow:0 2px 8px rgba(51,64,79,.08);
+    font-variant-numeric:tabular-nums; font-size:15px; font-weight:600; color:#33404f;
+  }
+  .timer-pill svg{flex:none}
+  .timer-pill.low{color:var(--danger); border-color:rgba(232,69,60,.4); animation:urgent .8s ease-in-out infinite}
+  @keyframes urgent{50%{box-shadow:0 0 12px rgba(232,69,60,.45)}}
+  .hud-right{display:flex; justify-content:flex-end; align-items:center; gap:8px}
+  .newrecord{
+    font-size:12px; font-weight:700; color:#fff; letter-spacing:.1em;
+    background:linear-gradient(180deg,#f05548,#d63a2e); border-radius:6px; padding:3px 10px;
+    box-shadow:0 2px 8px rgba(214,58,46,.4); transform:rotate(2deg);
+    opacity:0; transition:opacity .3s;
+  }
+  .newrecord.on{opacity:1}
+
+  /* ===== 瓶子棋盘：3 × 11 ===== */
+  #board{
+    margin-top:22px;
+    display:grid; grid-template-columns:repeat(11, auto); justify-content:center;
+    gap:var(--gapy) var(--gapx);
+  }
+  .bottle{
+    appearance:none; background:none; border:none; padding:0 3px 6px; cursor:pointer;
+    display:flex; flex-direction:column; align-items:center; touch-action:manipulation;
+    transition:transform .16s var(--ease-out-quart); position:relative;
+  }
+  .bottle:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:10px}
+  .glass{
+    position:relative; width:var(--bw); height:var(--bh);
+    border:1.5px solid rgba(255,255,255,.95);
+    border-radius:7px 7px 11px 11px;
+    background:linear-gradient(105deg, rgba(255,255,255,.5) 0%, rgba(255,255,255,.12) 40%, rgba(255,255,255,.3) 75%, rgba(255,255,255,.1) 100%);
+    box-shadow:inset 0 0 10px rgba(255,255,255,.35), 0 3px 8px rgba(51,64,79,.18);
+    overflow:visible;
+  }
+  .glass::before{ /* 瓶盖 */
+    content:""; position:absolute; top:-7px; left:50%; transform:translateX(-50%);
+    width:14px; height:8px; border-radius:4px 4px 2px 2px;
+    background:linear-gradient(180deg,#d8ecf4,#b4d8e8);
+    border:1.5px solid rgba(255,255,255,.95); border-bottom:none;
+    box-shadow:0 1px 3px rgba(51,64,79,.15);
+  }
+  .liquids{
+    position:absolute; left:2px; right:2px; top:2px; bottom:2px;
+    display:flex; flex-direction:column-reverse; overflow:hidden;
+    border-radius:5px 5px 9px 9px;
+  }
+  .seg{width:100%; transition:height .18s var(--ease-out-quart); position:relative; flex:none}
+  .seg.meniscus{border-radius:5px 5px 0 0}
+  .seg.meniscus::after{content:""; position:absolute; top:0; left:0; right:0; height:3px; background:rgba(255,255,255,.5); border-radius:5px 5px 0 0}
+  .seg.hidden-seg{
+    background:linear-gradient(180deg,#7d8694,#5d6673) !important;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .seg.hidden-seg::before{content:"?"; color:rgba(255,255,255,.85); font-weight:700; font-size:12px; font-family:Georgia,serif}
+  .seg.reveal{animation:flipIn .3s var(--ease-out-quart)}
+  @keyframes flipIn{from{transform:scaleY(0)}}
+
+  /* 选中：抬升 + 白色光晕 */
+  .bottle.sel{transform:translateY(-9px) scale(1.05)}
+  .bottle.sel .glass{box-shadow:0 0 0 2px rgba(255,255,255,.95), 0 0 16px rgba(255,255,255,.9), 0 6px 14px rgba(51,64,79,.25)}
+  .bottle.sel .glass::before{box-shadow:0 0 10px #fff, 0 0 4px #fff; background:linear-gradient(180deg,#fff,#dff2fa)}
+
+  .bottle.shake{animation:shake .24s}
+  @keyframes shake{25%{transform:translateX(-4px)} 50%{transform:translateX(4px)} 75%{transform:translateX(-2px)}}
+
+  /* 完成闪白 */
+  .bottle.flash .glass{animation:flashWhite .5s var(--ease-out-quart)}
+  @keyframes flashWhite{
+    0%{box-shadow:0 0 0 0 rgba(255,255,255,0)}
+    35%{box-shadow:0 0 0 5px rgba(255,255,255,1), 0 0 30px 10px rgba(255,255,255,.95); filter:brightness(1.9) saturate(.2)}
+    100%{box-shadow:0 0 0 0 rgba(255,255,255,0); filter:none}
+  }
+  /* 完成消逝 */
+  .bottle.vanish{transition:transform .28s ease-in, opacity .28s; transform:translateY(-14px) scale(.6); opacity:0}
+  /* 新瓶滑入（右侧滑入带拖影） */
+  .bottle.spawn{animation:spawnIn .34s var(--ease-out-quart) both}
+  @keyframes spawnIn{
+    0%{transform:translate(46px,-18px) rotate(8deg); opacity:0; filter:blur(5px)}
+    60%{opacity:1; filter:blur(1.5px)}
+    100%{transform:none; filter:none}
+  }
+  .bottle.enter{animation:enter .4s var(--ease-out-quart) both; animation-delay:calc(var(--i,0)*22ms)}
+  @keyframes enter{from{opacity:0; transform:translateY(16px)}}
+
+  /* 水柱 */
+  .stream{
+    position:absolute; width:4px; border-radius:999px; z-index:40; pointer-events:none;
+    transform-origin:top center; opacity:0; box-shadow:0 0 6px currentColor;
+  }
+
+  /* 漂浮文字 */
+  #fx{position:absolute; inset:0; pointer-events:none; z-index:50}
+  .float{
+    position:absolute; transform:translate(-50%,0); white-space:nowrap;
+    font-weight:700; animation:rise .85s var(--ease-out-quart) forwards;
+    text-shadow:0 1px 4px rgba(255,255,255,.8);
+  }
+  @keyframes rise{to{transform:translate(-50%,-40px); opacity:0}}
+
+  /* 底部 */
+  .btn{
+    appearance:none; cursor:pointer; font-family:inherit; font-size:12px; letter-spacing:.2em; text-indent:.2em;
+    color:var(--ink); background:rgba(255,255,255,.6); border:1.5px solid rgba(60,71,87,.22);
+    padding:8px 22px; border-radius:999px;
+    transition:transform .15s var(--ease-out-quart), background .2s;
+  }
+  .btn:hover{background:rgba(255,255,255,.9); transform:translateY(-2px)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{color:#fff; background:linear-gradient(180deg,#57a7e8,#3f8fd4); border-color:transparent; font-weight:600; box-shadow:0 3px 10px rgba(63,143,212,.35)}
+  .btn.primary:hover{background:linear-gradient(180deg,#6ab3ec,#4a98da)}
+
+  /* 覆盖层 */
+  .overlay{
+    position:absolute; inset:0; z-index:100; display:flex; align-items:center; justify-content:center;
+    background:rgba(220,236,242,.72); backdrop-filter:blur(8px); padding:20px;
+  }
+  .overlay[hidden]{display:none}
+  .panel{
+    width:100%; max-width:400px; text-align:center;
+    background:rgba(255,255,255,.92); border:1.5px solid rgba(255,255,255,1);
+    border-radius:18px; padding:30px 28px 26px; box-shadow:0 24px 60px rgba(51,64,79,.22);
+    animation:panelIn .5s var(--ease-out-quart);
+  }
+  @keyframes panelIn{from{opacity:0; transform:translateY(24px) scale(.96)}}
+  .panel h2{
+    font-family:"Noto Serif SC","Songti SC","STSong",serif; font-size:24px; letter-spacing:.14em; text-indent:.14em;
+    margin:8px 0 16px; color:#33404f; font-weight:700;
+  }
+  .rules{text-align:left; font-size:13px; line-height:2.1; color:var(--ink); margin:0 auto 20px; max-width:300px}
+  .rules li{margin-left:1.2em; padding-left:.2em}
+  .rules b{color:var(--accent); font-weight:600}
+  .final{display:flex; justify-content:center; gap:30px; margin:4px 0 22px}
+  .final .f{display:flex; flex-direction:column; gap:4px}
+  .final .f .k{font-size:10px; letter-spacing:.24em; color:var(--dim)}
+  .final .f .v{font-family:"Noto Serif SC","Songti SC","STSong",serif; font-size:28px; color:#33404f}
+  .final .f .v.blue{color:var(--accent)}
+  .newbest{margin:-10px 0 16px; font-size:12px; color:var(--danger); font-weight:700; letter-spacing:.2em; animation:pop .5s var(--ease-out-quart)}
+
+  #banner{
+    position:absolute; top:30%; left:50%; transform:translate(-50%,-50%); z-index:60; pointer-events:none;
+    font-family:"Noto Serif SC","Songti SC","STSong",serif; font-size:clamp(20px,4vw,28px); font-weight:700;
+    letter-spacing:.22em; text-indent:.22em; color:var(--accent); text-shadow:0 0 20px rgba(255,255,255,.9);
+    opacity:0; white-space:nowrap;
+  }
+  #banner.show{animation:banner 1.1s var(--ease-out-quart)}
+  @keyframes banner{15%{opacity:1; transform:translate(-50%,-50%) scale(1.04)} 70%{opacity:1} 100%{opacity:0; transform:translate(-50%,-58%)}}
+
+  .best-line{margin-top:4px; font-size:10px; color:#8b98a8; letter-spacing:.18em}
+  .best-line b{color:#5b7c8c; font-weight:700}
+  .st-best{margin:2px 0 12px; font-size:11px; color:#8b98a8; letter-spacing:.2em}
+  .st-best b{color:var(--accent); font-weight:700; font-size:14px; margin-left:4px}
+
+  /* 触控优化 */
+  .bottle, .btn, .icon-btn{-webkit-tap-highlight-color:transparent; user-select:none; -webkit-user-select:none}
+  .bottle::after{content:""; position:absolute; inset:-6px -8px} /* 扩大触控热区 */
+
+  @media (prefers-reduced-motion: reduce){
+    .bottle, .seg, .btn{transition:none}
+    .bottle.enter, .bottle.spawn, .bottle.flash .glass, .panel{animation:none}
+    .bottle.shake, .timer-pill.low{animation:none}
+    .float{animation-duration:.3s}
+    #banner.show{animation-duration:.4s}
+  }
+</style>
+</head>
+<body>
+  <div class="pattern" aria-hidden="true"></div>
+
+  <div id="stage">
+    <div class="hud-top">
+      <div class="hud-left">
+        <button class="icon-btn" id="btn-back" type="button" aria-label="返回">‹</button>
+        <button class="icon-btn" id="btn-info" type="button" aria-label="玩法说明">i</button>
+        <div class="combo-pill" id="combo-pill">
+          <div class="ct">连击 ×<b id="combo-n">1</b></div>
+          <div class="combo-bar"><i id="combo-fill"></i></div>
+        </div>
+      </div>
+      <div class="score-wrap">
+        <div class="score-line">
+          <span class="score-k">得分</span><span id="score">0</span><span class="gain" id="gain"></span>
+        </div>
+        <div class="best-line">历史最高 <b id="hud-best">0</b></div>
+        <div class="timer-pill" id="timer-pill">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span id="time-num">01:30</span>
+        </div>
+      </div>
+      <div class="hud-right">
+        <span class="newrecord" id="newrecord">新纪录！</span>
+        <button class="icon-btn" id="btn-pause" type="button" aria-label="暂停"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></svg></button>
+        <button class="icon-btn" id="btn-restart" type="button" aria-label="重新开始"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></button>
+      </div>
+    </div>
+
+    <div id="board" role="group" aria-label="瓶子棋盘"></div>
+
+    <div id="fx" aria-hidden="true"></div>
+    <div id="banner" aria-hidden="true"></div>
+
+    <!-- 开局说明 -->
+    <div class="overlay" id="ov-start" hidden>
+    <div class="panel" role="dialog" aria-labelledby="st-title">
+      <h2 id="st-title">无尽模式</h2>
+      <ul class="rules">
+        <li>在倒计时内<b>归集颜色</b>：每只瓶子集满 4 格同色即完成</li>
+        <li>每完成一只：<b>+100 分 · +3 秒</b>，瓶子消逝、新瓶补位</li>
+        <li>3 秒内连续完成触发<b>连击</b>，获得额外加分</li>
+        <li>部分瓶底藏有<b>「?」格</b>，倒出上层后才会显示颜色</li>
+      </ul>
+      <div class="st-best" id="st-best-wrap" hidden>历史最高分<b id="st-best">0</b></div>
+      <button class="btn primary" id="btn-start" type="button">开 始</button>
+    </div>
+  </div>
+
+  <!-- 暂停 -->
+  <div class="overlay" id="ov-pause" hidden>
+    <div class="panel" role="dialog" aria-labelledby="ps-title">
+      <h2 id="ps-title">已暂停</h2>
+      <button class="btn primary" id="btn-resume" type="button">继 续</button>
+      <div style="height:10px"></div>
+      <button class="btn" id="btn-pause-restart" type="button">重新开始</button>
+    </div>
+  </div>
+
+  <!-- 结算 -->
+  <div class="overlay" id="ov-over" hidden>
+    <div class="panel" role="dialog" aria-labelledby="ov-title">
+      <h2 id="ov-title">游戏结束</h2>
+      <div class="final">
+        <div class="f"><span class="k">最终得分</span><span class="v blue" id="f-score">0</span></div>
+        <div class="f"><span class="k">归集瓶数</span><span class="v" id="f-sorted">0</span></div>
+        <div class="f"><span class="k">最高连击</span><span class="v" id="f-combo">0</span></div>
+        <div class="f"><span class="k">历史最高</span><span class="v" id="f-best">0</span></div>
+      </div>
+      <div class="newbest" id="f-newbest" hidden>✦ 新 纪 录 ✦</div>
+      <button class="btn primary" id="btn-again" type="button">再来一局</button>
+    </div>
+  </div>
+  </div><!-- /#stage -->
+
+<script>
+(function(){
+  "use strict";
+
+  /* ================= 常量 ================= */
+  var CAP = 4;                  // 瓶容量
+  var COLS_N = 11, ROWS_N = 3;  // 盘面
+  var SLOTS = COLS_N * ROWS_N;  // 33
+  var EMPTY_N = 5;              // 常驻空瓶
+  var COLORS_N = 7;             // 色彩数
+  var UNITS_PER_COLOR = 16;     // 每色总格数 = 4 瓶
+  var START_TIME = 90;
+  var TIME_CAP = 180;
+  var BONUS_TIME = 3;
+  var COMBO_WIN = 3000;
+
+  /* 配色：朱红 / 墨黑 / 松绿 / 杏黄 / 幽紫 / 靛蓝 / 琥珀 */
+  var COLORS = [
+    ["#e8453c","朱红"], ["#333a45","墨黑"], ["#3fae8c","松绿"], ["#f2c230","杏黄"],
+    ["#8e55c8","幽紫"], ["#3f8fd4","靛蓝"], ["#f08a2d","琥珀"]
+  ];
+
+  var REDUCED = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ================= 状态 ================= */
+  var S = {
+    started:false, over:false, lock:false,
+    score:0, combo:0, maxCombo:0, lastComplete:-1e9, sorted:0, paused:false, pauseStart:0,
+    timeLeft:START_TIME, bottles:[], busy:[], selected:null, queue:[],
+    recordShown:false
+  };
+  var best = 0;
+  try{ best = parseInt(localStorage.getItem("dcke_best2")||"0",10)||0; }catch(e){}
+
+  /* ================= DOM ================= */
+  function $(id){ return document.getElementById(id); }
+  var board=$("board"), scoreEl=$("score"), gainEl=$("gain"),
+      comboPill=$("combo-pill"), comboN=$("combo-n"), comboFill=$("combo-fill"),
+      timeNum=$("time-num"), timerPill=$("timer-pill"), newrec=$("newrecord"),
+      fx=$("fx"), banner=$("banner"), stage=$("stage");
+
+  /* ================= 舞台适配：横屏缩放，竖屏旋转 90° ================= */
+  function fit(){
+    var w=window.innerWidth, h=window.innerHeight;
+    if(!w || !h) return;
+    var portrait=h>w;
+    var sw=portrait?h:w, sh=portrait?w:h;   /* 旋转后可用尺寸 */
+    var bw=stage.offsetWidth, bh=stage.offsetHeight;
+    if(!bw||!bh) return;
+    var s=Math.min(sw/bw, sh/bh, 1.3);
+    stage.style.transform="translate(-50%,-50%) "+(portrait?"rotate(90deg) ":"")+"scale("+s+")";
+  }
+  window.addEventListener("resize",fit);
+  window.addEventListener("orientationchange",function(){ setTimeout(fit,80); });
+  window.addEventListener("load",function(){ setTimeout(fit,60); });
+
+  /* 舞台局部坐标（不受整体缩放/旋转影响） */
+  function localRect(el){
+    var x=0, y=0, n=el;
+    while(n && n!==stage){ x+=n.offsetLeft; y+=n.offsetTop; n=n.offsetParent; }
+    return {x:x, y:y, w:el.offsetWidth, h:el.offsetHeight};
+  }
+
+  /* ================= 音效 ================= */
+  var AC=null, muted=false;
+  function ac(){
+    if(!AC){ try{ AC=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} }
+    if(AC && AC.state==="suspended"){ AC.resume(); }
+    return AC;
+  }
+  function tone(freq,dur,type,vol,when,slideTo){
+    if(muted) return;
+    var c=ac(); if(!c) return;
+    var t=c.currentTime+(when||0);
+    var o=c.createOscillator(), g=c.createGain();
+    o.type=type||"sine"; o.frequency.setValueAtTime(freq,t);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(slideTo,t+dur);
+    g.gain.setValueAtTime(0,t);
+    g.gain.linearRampToValueAtTime(vol||0.05,t+0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+    o.connect(g); g.connect(c.destination);
+    o.start(t); o.stop(t+dur+0.05);
+  }
+  var sfx={
+    select:function(){ tone(720,.05,"triangle",.03); },
+    deselect:function(){ tone(480,.04,"triangle",.02); },
+    pour:function(){ tone(430,.22,"sine",.035,0,250); },
+    complete:function(combo){
+      var base=560*Math.pow(1.05,Math.min(combo,12));
+      tone(base,.1,"sine",.055); tone(base*1.5,.14,"sine",.045,.07);
+    },
+    reveal:function(){ tone(880,.07,"triangle",.03,0,1320); },
+    over:function(){ tone(330,.5,"sine",.05,0,110); },
+    tick:function(){ tone(880,.04,"square",.016); }
+  };
+
+  /* ================= 工具 ================= */
+  function shuffle(a){
+    for(var i=a.length-1;i>0;i--){ var j=Math.floor(Math.random()*(i+1)); var t=a[i];a[i]=a[j];a[j]=t; }
+    return a;
+  }
+  function isUniform(b){ return b.length>0 && b.every(function(u){return u.c===b[0].c;}); }
+  function isComplete(b){ return b.length===CAP && isUniform(b); }
+  function after(ms,fn){ setTimeout(fn, REDUCED ? Math.min(ms,70) : ms); }
+  function shade(hex){
+    var m=hex.match(/#(..)(..)(..)/); if(!m) return hex;
+    var f=function(h){ var v=Math.round(parseInt(h,16)*0.85); return ("0"+v.toString(16)).slice(-2); };
+    return "#"+f(m[1])+f(m[2])+f(m[3]);
+  }
+  function slotEl(i){ return board.querySelector('[data-i="'+i+'"]'); }
+
+  /* ================= 盘面生成 ================= */
+  /* 单元：{c: 色, h: 是否隐藏} */
+  function hideBottoms(b){
+    /* 底部若干格隐藏，瓶顶必可见 */
+    var len=b.length;
+    if(len>=3 && Math.random()<0.45) b[0].h=true;
+    if(len>=4 && Math.random()<0.22) b[1].h=true;
+    return b;
+  }
+  function genBoard(){
+    var pool=[], b, tries=0;
+    for(var c=0;c<COLORS_N;c++) for(var k=0;k<UNITS_PER_COLOR;k++) pool.push(c);
+    do{
+      shuffle(pool);
+      b=[];
+      var per=CAP, filled=SLOTS-EMPTY_N, idx=0;
+      for(var i=0;i<filled;i++){
+        var bottle=[];
+        for(var j=0;j<per;j++) bottle.push({c:pool[idx++],h:false});
+        b.push(hideBottoms(bottle));
+      }
+      tries++;
+    }while(b.some(isComplete) && tries<60);
+    for(var e=0;e<EMPTY_N;e++) b.push([]);
+    /* 打散瓶位，避免空瓶扎堆 */
+    return shuffle(b);
+  }
+  function makeBottle(){
+    /* 新补位瓶：从场上现存颜色中随机取，保证可续 */
+    var present={};
+    S.bottles.forEach(function(b){ b.forEach(function(u){ present[u.c]=1; }); });
+    var keys=Object.keys(present).map(Number);
+    if(!keys.length) for(var c=0;c<COLORS_N;c++) keys.push(c);
+    for(var t=0;t<12;t++){
+      var u=[];
+      for(var i=0;i<CAP;i++) u.push({c:keys[Math.floor(Math.random()*keys.length)],h:false});
+      if(isUniform(u) && t<11) continue;
+      if(isUniform(u)){ /* 保底换一格 */
+        for(var c2=0;c2<COLORS_N;c2++){
+          if(c2!==u[0].c && present[c2]){ u[CAP-1].c=c2; break; }
+        }
+        if(isUniform(u)) continue;
+      }
+      return hideBottoms(u);
+    }
+    return u;
+  }
+
+  /* ================= 渲染 ================= */
+  function segHTML(u,top){
+    if(u.h) return '<div class="seg hidden-seg" style="height:'+(100/CAP)+'%"></div>';
+    return '<div class="seg'+(top?" meniscus":"")+'" style="height:'+(100/CAP)+'%;background:'+
+      'linear-gradient(180deg,'+COLORS[u.c][0]+','+shade(COLORS[u.c][0])+');color:'+COLORS[u.c][0]+'"></div>';
+  }
+  function bottleHTML(i,extraCls){
+    var b=S.bottles[i];
+    var html='<button type="button" class="bottle'+(S.selected===i?" sel":"")+(extraCls?" "+extraCls:"")+
+          '" data-i="'+i+'" style="--i:'+i+'" aria-label="'+ariaLabel(b,i)+'">'+
+          '<span class="glass"><span class="liquids">';
+    b.forEach(function(u,idx){ html+=segHTML(u, idx===b.length-1 && !u.h); });
+    return html+'</span></span></button>';
+  }
+  function renderBoard(enterAnim){
+    var html="";
+    for(var i=0;i<S.bottles.length;i++) html+=bottleHTML(i, enterAnim?"enter":"");
+    board.innerHTML=html;
+  }
+  function renderSlot(i,extraCls){
+    var old=slotEl(i);
+    var html=bottleHTML(i, extraCls||"");
+    if(old){ old.insertAdjacentHTML("beforebegin",html); old.remove(); }
+    else board.insertAdjacentHTML("beforeend",html);
+  }
+  function ariaLabel(b,i){
+    var t="瓶子"+(i+1)+"，";
+    if(!b.length) return t+"空瓶";
+    if(isComplete(b)) return t+"已完成，"+COLORS[b[0].c][1];
+    return t+b.map(function(u){return u.h?"未知":COLORS[u.c][1];}).join("、");
+  }
+
+  /* ================= 漂浮文字 / 横幅 ================= */
+  function floatText(x,y,txt,color,size){
+    var el=document.createElement("div");
+    el.className="float";
+    el.style.left=x+"px"; el.style.top=y+"px";
+    el.style.color=color||"#33404f";
+    el.style.fontSize=(size||15)+"px";
+    el.textContent=txt;
+    fx.appendChild(el);
+    setTimeout(function(){ el.remove(); },900);
+  }
+  function floatAtBottle(idx,txt,color,size){
+    var el=slotEl(idx);
+    if(!el) return;
+    var r=localRect(el);
+    floatText(r.x+r.w/2, r.y-4, txt, color, size);
+  }
+  function showBanner(txt){
+    banner.textContent=txt;
+    banner.classList.remove("show"); void banner.offsetWidth; banner.classList.add("show");
+  }
+  function showGain(n){
+    gainEl.textContent="+"+n;
+    gainEl.classList.remove("show"); void gainEl.offsetWidth; gainEl.classList.add("show");
+  }
+
+  /* ================= 倒水动画 ================= */
+  function stream(x1,y1,x2,y2,color,dur){
+    var el=document.createElement("div");
+    el.className="stream";
+    el.style.left=(x1-2)+"px"; el.style.top=y1+"px";
+    el.style.height=Math.max(8,y2-y1)+"px";
+    el.style.background="linear-gradient(180deg,rgba(255,255,255,.85),"+color+" 30%,"+color+")";
+    el.style.color=color;
+    el.style.transform="scaleY(0)";
+    fx.appendChild(el);
+    requestAnimationFrame(function(){
+      el.style.transition="transform .1s cubic-bezier(.16,1,.3,1), opacity .12s";
+      el.style.opacity="1"; el.style.transform="scaleY(1)";
+      setTimeout(function(){
+        el.style.opacity="0"; el.style.transform="scaleY(.5)";
+        setTimeout(function(){ el.remove(); },130);
+      }, Math.max(50,dur-70));
+    });
+  }
+  function drainSegs(btn,k,dur){
+    var liq=btn.querySelector(".liquids"), n=liq.children.length;
+    for(var j=0;j<k;j++){
+      var s=liq.children[n-1-j];
+      if(!s) break;
+      s.style.transitionDuration=dur+"ms";
+      s.style.transitionDelay=(j*45)+"ms";
+      s.style.height="0%";
+    }
+  }
+  function fillSegs(btn,k,color,dur){
+    var liq=btn.querySelector(".liquids");
+    var cur=liq.children;
+    if(cur.length && cur[cur.length-1].classList.contains("meniscus"))
+      cur[cur.length-1].classList.remove("meniscus");
+    for(var j=0;j<k;j++){
+      var s=document.createElement("div");
+      s.className="seg"+(j===k-1?" meniscus":"");
+      s.style.background="linear-gradient(180deg,"+COLORS[color][0]+","+shade(COLORS[color][0])+")";
+      s.style.color=COLORS[color][0];
+      s.style.height="0%";
+      s.style.transitionDuration=dur+"ms";
+      s.style.transitionDelay=(j*45)+"ms";
+      liq.appendChild(s);
+      void s.offsetWidth;
+      s.style.height=(100/CAP)+"%";
+    }
+  }
+  /* 拿起 → 移动倾斜约55° → 注流 → 归位，全程紧凑 */
+  function animatePour(a,b,k,color,done){
+    var aBtn=slotEl(a), bBtn=slotEl(b);
+    if(!aBtn || !bBtn){ done(); return; }
+    if(REDUCED){ setTimeout(done, 70); return; }
+    var aGlass=aBtn.querySelector(".glass"), bGlass=bBtn.querySelector(".glass");
+    var ra=localRect(aGlass), rb=localRect(bGlass);
+    var rbtn=localRect(aBtn);
+    var mx=ra.x+ra.w/2, my=ra.y;
+    var tx=rb.x+rb.w/2, ty=rb.y;
+    var dir = tx>=mx ? 1 : -1;
+    var hover = ra.h*0.38;
+    var ox = mx-rbtn.x, oy = my-rbtn.y;
+    var dx = (tx - dir*ra.w*0.35) - mx;
+    var dy = (ty - hover) - my;
+    var tilt = dir*55;
+    var pourDur = 170 + k*90;
+    var T1=110, T2=190;
+
+    aBtn.style.transformOrigin=ox+"px "+oy+"px";
+    aBtn.style.zIndex="30";
+    aBtn.style.transition="transform "+T1+"ms cubic-bezier(.25,1,.5,1)";
+    aBtn.style.transform="translateY(-10px) scale(1.05)";
+    after(T1,function(){
+      aBtn.style.transition="transform "+T2+"ms cubic-bezier(.65,0,.35,1)";
+      aBtn.style.transform="translate("+dx+"px,"+dy+"px) rotate("+tilt+"deg)";
+    });
+    after(T1+T2,function(){
+      stream(tx-dir*ra.w*0.35, ty-hover+8, tx, ty+3, COLORS[color][0], pourDur);
+      drainSegs(aBtn,k,pourDur);
+      fillSegs(bBtn,k,color,pourDur);
+      sfx.pour();
+    });
+    after(T1+T2+pourDur+50,function(){
+      aBtn.style.transition="transform .22s cubic-bezier(.25,1,.5,1)";
+      aBtn.style.transform="";
+      after(230,function(){
+        aBtn.style.zIndex=""; aBtn.style.transition=""; aBtn.style.transformOrigin="";
+        done();
+      });
+    });
+  }
+
+  /* ================= 「?」显形 ================= */
+  function revealTop(idx){
+    var b=S.bottles[idx];
+    if(!b.length) return;
+    var top=b[b.length-1];
+    if(!top.h) return;
+    top.h=false;
+    sfx.reveal();
+    var btn=slotEl(idx);
+    if(!btn) { return; }
+    btn.setAttribute("aria-label", ariaLabel(b,idx));
+    var liq=btn.querySelector(".liquids");
+    var seg=liq.children[b.length-1];
+    if(seg){
+      var ns=document.createElement("div");
+      ns.className="seg reveal"+(true?" meniscus":"");
+      ns.style.height=(100/CAP)+"%";
+      ns.style.background="linear-gradient(180deg,"+COLORS[top.c][0]+","+shade(COLORS[top.c][0])+")";
+      ns.style.color=COLORS[top.c][0];
+      seg.replaceWith(ns);
+      floatAtBottle(idx, COLORS[top.c][1], COLORS[top.c][0], 12);
+    }
+  }
+
+  /* ================= 完成 → 消逝 → 补位 ================= */
+  function completeBottle(idx){
+    var now=performance.now();
+    if(now-S.lastComplete<COMBO_WIN) S.combo++; else S.combo=1;
+    S.lastComplete=now;
+    if(S.combo>S.maxCombo) S.maxCombo=S.combo;
+    var gain=100+(S.combo-1)*50;
+    S.score+=gain; S.sorted++;
+    S.timeLeft=Math.min(TIME_CAP, S.timeLeft+BONUS_TIME);
+    sfx.complete(S.combo);
+    showGain(gain);
+    floatAtBottle(idx,"+"+gain,"#39b54a",15);
+    if(S.combo>=2) floatAtBottle(idx,"连击 ×"+S.combo,"#f08a2d",12);
+    scoreEl.classList.remove("pop"); void scoreEl.offsetWidth; scoreEl.classList.add("pop");
+    if(!S.recordShown && S.score>best){
+      S.recordShown=true; newrec.classList.add("on");
+    }
+    renderHUD();
+    /* 闪白 → 消逝 → 补位 */
+    S.busy[idx]=true;
+    var bc=S.bottles[idx];
+    for(var z=0;z<bc.length;z++) bc[z].h=false; /* 闪白前显形所有「?」 */
+    renderSlot(idx);
+    var btn=slotEl(idx);
+    if(btn) btn.classList.add("flash");
+    after(480,function(){
+      var btn2=slotEl(idx);
+      if(btn2) btn2.classList.add("vanish");
+      after(REDUCED?60:280,function(){
+        S.bottles[idx]=makeBottle();
+        S.busy[idx]=false;
+        renderSlot(idx,"spawn");
+        if(S.started && !S.over && !hasMoves()) reshuffle();
+      });
+    });
+  }
+
+  /* ================= 交互 ================= */
+  board.addEventListener("click",function(e){
+    var btn=e.target.closest(".bottle");
+    if(!btn || S.over || !S.started || S.paused) return;
+    var i=parseInt(btn.dataset.i,10);
+    if(S.lock){
+      if(S.queue.length<8){
+        S.queue.push(i);
+        btn.classList.add("sel"); /* 即时预选反馈，队列执行时由 renderSlot 接管 */
+      }
+      return;
+    }
+    onBottle(i,btn);
+  });
+
+  function drainQueue(){
+    while(S.queue.length && !S.lock && S.started && !S.over && !S.paused){
+      var qi=S.queue.shift();
+      var qbtn=slotEl(qi);
+      if(qbtn) onBottle(qi,qbtn); /* 若触发倒水则 S.lock 重新置位，剩余点击留待下次解锁 */
+    }
+  }
+
+  function wiggle(btn){
+    btn.classList.remove("shake"); void btn.offsetWidth; btn.classList.add("shake");
+    setTimeout(function(){ btn.classList.remove("shake"); },260);
+  }
+
+  function onBottle(i,btn){
+    var b=S.bottles[i];
+    if(S.busy[i]) return;
+    if(S.selected===null){
+      if(isComplete(b)||!b.length){ wiggle(btn); return; }
+      S.selected=i; renderSlot(i); sfx.select();
+      /* renderSlot 重建节点，选中态已在 HTML 内 */
+    }else if(S.selected===i){
+      S.selected=null; renderSlot(i); sfx.deselect();
+    }else{
+      tryPour(S.selected,i);
+    }
+  }
+
+  function tryPour(a,b){
+    var A=S.bottles[a], B=S.bottles[b];
+    var valid = !S.busy[a] && !S.busy[b] &&
+                A.length>0 && !isComplete(A) && !isComplete(B) && B.length<CAP &&
+                (B.length===0 || B[B.length-1].c===A[A.length-1].c);
+    if(!valid){
+      var old=slotEl(a);
+      if(old){ S.selected=null; renderSlot(a); }
+      var btnB=slotEl(b);
+      if(B.length>0 && !isComplete(B) && !S.busy[b]){ S.selected=b; renderSlot(b); sfx.select(); }
+      else wiggle(btnB);
+      return;
+    }
+    var color=A[A.length-1].c, run=1;
+    for(var i=A.length-2;i>=0 && A[i].c===color && !A[i].h;i--) run++;
+    /* 注意：隐藏格不可能在顶部（倒入后已显形），run 统计可见同色 */
+    var k=Math.min(run, CAP-B.length);
+
+    S.lock=true; S.selected=null;
+    renderSlot(a);
+
+    animatePour(a,b,k,color,function(){
+      for(var m=0;m<k;m++){ B.push(A.pop()); }
+      renderSlot(a); renderSlot(b);
+      S.lock=false;
+      revealTop(a);   /* 源瓶新顶显形 */
+      if(isComplete(B)) completeBottle(b);
+      else if(!hasMoves()) reshuffle();
+      drainQueue();   /* 执行动画期间排队的点击 */
+    });
+  }
+
+  /* ================= 死局检测与洗牌 ================= */
+  function hasMoves(){
+    var n=S.bottles.length;
+    for(var a=0;a<n;a++){
+      var A=S.bottles[a];
+      if(S.busy[a] || !A.length || isComplete(A)) continue;
+      for(var b=0;b<n;b++){
+        if(a===b || S.busy[b]) continue;
+        var B=S.bottles[b];
+        if(isComplete(B) || B.length>=CAP) continue;
+        if(B.length===0){ if(!isUniform(A)) return true; }
+        else if(B[B.length-1].c===A[A.length-1].c) return true;
+      }
+    }
+    return false;
+  }
+  function breakUniforms(){
+    for(var t=0;t<3;t++){
+      var fixed=false;
+      for(var i=0;i<S.bottles.length;i++){
+        var b=S.bottles[i];
+        if(!isComplete(b)) continue;
+        for(var d=0;d<S.bottles.length && !fixed;d++){
+          var donor=S.bottles[d];
+          if(d===i || isComplete(donor) || !donor.length) continue;
+          for(var j=0;j<donor.length;j++){
+            if(donor[j].c!==b[0].c){
+              var tmp=b[CAP-1]; b[CAP-1]=donor[j]; donor[j]=tmp;
+              fixed=true; break;
+            }
+          }
+        }
+      }
+      if(!fixed) break;
+    }
+  }
+  function reshuffle(){
+    S.lock=true;
+    var idxs=[], units=[];
+    S.bottles.forEach(function(b,i){
+      if(isComplete(b) || S.busy[i]) return;
+      idxs.push(i); units=units.concat(b);
+    });
+    var tries=0, refill;
+    do{
+      shuffle(units);
+      refill=[]; var p=0;
+      for(var t=0;t<idxs.length;t++){
+        var take=Math.min(CAP, units.length-p);
+        refill.push(units.slice(p,p+take)); p+=take;
+      }
+      tries++;
+    }while(refill.some(isComplete) && tries<40);
+    idxs.forEach(function(bi,t){ S.bottles[bi]=refill[t]||[]; });
+    breakUniforms();
+    setTimeout(function(){
+      renderBoard(true);
+      var r=localRect(board);
+      floatText(r.x+r.w/2, r.y+20, "无可倒水，重新洗牌", "#8b98a8", 14);
+      S.lock=false;
+      drainQueue();
+    }, REDUCED?60:180);
+  }
+
+  /* ================= 计时 ================= */
+  var lastTick=performance.now(), lastWhole=-1;
+  setInterval(function(){
+    var now=performance.now();
+    if(S.started && !S.over && !S.paused && !document.hidden){
+      S.timeLeft-=(now-lastTick)/1000;
+      if(S.timeLeft<=0){ S.timeLeft=0; gameOver(); }
+      var w=Math.ceil(S.timeLeft);
+      if(w!==lastWhole){
+        lastWhole=w;
+        var mm=Math.floor(w/60), ss=w%60;
+        timeNum.textContent=(mm<10?"0":"")+mm+":"+(ss<10?"0":"")+ss;
+        if(w<=5 && w>0) sfx.tick();
+      }
+    }
+    lastTick=now;
+    timerPill.classList.toggle("low", S.timeLeft<=10 && S.started && !S.over);
+    /* 连击条衰减 */
+    if(S.combo>0 && !S.paused){
+      var left=1-(performance.now()-S.lastComplete)/COMBO_WIN;
+      if(left<=0){ S.combo=0; renderHUD(); }
+      else comboFill.style.width=(left*100)+"%";
+    }
+  },100);
+
+  function renderBest(){
+    var v=Math.max(best, S.score||0);
+    $("hud-best").textContent=v;
+    $("f-best").textContent=v;
+    $("st-best").textContent=best;
+    $("st-best-wrap").hidden=best<=0;
+  }
+
+  function renderHUD(){
+    scoreEl.textContent=S.score;
+    renderBest();
+    if(S.combo>=2){
+      comboN.textContent=S.combo;
+      comboPill.classList.add("on");
+    }else comboPill.classList.remove("on");
+  }
+
+  /* ================= 流程 ================= */
+  function startGame(){
+    S.started=true; S.over=false; S.lock=false;
+    S.score=0; S.combo=0; S.maxCombo=0; S.sorted=0;
+    S.lastComplete=-1e9; S.timeLeft=START_TIME; lastWhole=-1;
+    S.recordShown=false; newrec.classList.remove("on");
+    S.bottles=genBoard();
+    S.busy=[]; for(var i=0;i<SLOTS;i++) S.busy.push(false);
+    S.selected=null;
+    renderBoard(true); renderHUD();
+    $("ov-start").hidden=true;
+    $("ov-over").hidden=true;
+    $("ov-pause").hidden=true;
+    S.queue=[]; S.paused=false;
+  }
+
+  function gameOver(){
+    S.over=true; S.selected=null; S.queue=[];
+    $("ov-pause").hidden=true;
+    sfx.over();
+    renderBoard();
+    $("f-score").textContent=S.score;
+    $("f-sorted").textContent=S.sorted;
+    $("f-combo").textContent=S.maxCombo;
+    var nb=false;
+    if(S.score>best){
+      best=S.score; nb=true;
+      try{ localStorage.setItem("dcke_best2",String(best)); }catch(e){}
+    }
+    $("f-newbest").hidden=!nb;
+    renderBest();
+    $("ov-over").hidden=false;
+  }
+
+  /* ================= 暂停 ================= */
+  function pauseGame(){
+    if(!S.started || S.over || S.paused) return;
+    S.paused=true; S.pauseStart=performance.now();
+    $("ov-pause").hidden=false;
+  }
+  function resumeGame(){
+    if(!S.paused) return;
+    S.paused=false;
+    if(S.lastComplete>0) S.lastComplete+=performance.now()-S.pauseStart; /* 连击窗口冻结补偿 */
+    $("ov-pause").hidden=true;
+  }
+
+  /* ================= 按钮 ================= */
+  $("btn-pause").addEventListener("click",function(){ pauseGame(); });
+  $("btn-resume").addEventListener("click",function(){ resumeGame(); });
+  $("btn-pause-restart").addEventListener("click",function(){ $("ov-pause").hidden=true; startGame(); });
+  $("btn-start").addEventListener("click",function(){ ac(); startGame(); });
+  $("btn-again").addEventListener("click",function(){ startGame(); });
+  $("btn-restart").addEventListener("click",function(){
+    if(!S.started){ $("ov-start").hidden=false; return; }
+    startGame();
+  });
+  $("btn-back").addEventListener("click",function(){ $("ov-start").hidden=false; });
+  $("btn-info").addEventListener("click",function(){ $("ov-start").hidden=false; });
+
+  /* 初始预览 + 开局面板 */
+  S.bottles=genBoard();
+  S.busy=[]; for(var i=0;i<SLOTS;i++) S.busy.push(false);
+  renderBoard();
+  renderHUD();
+  fit(); setTimeout(fit,120);
+  $("ov-start").hidden=false;
+})();
+</script>
+</body>
+</html>
